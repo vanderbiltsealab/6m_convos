@@ -1,0 +1,467 @@
+---
+title: "BABIES 6m Convos"
+author: "Virginia Salo"
+date: "3/14/2022"
+output: html_document
+---
+
+
+# Setup environment
+```{r}
+#LIBRARIES
+library(tidyverse)
+library(lubridate)
+library(patchwork)
+library(pastecs)
+library(e1071)
+library(lme4)
+library(lmerTest)
+library(performance)
+library(see)
+library(qqplotr)
+library(sjPlot)
+library(effectsize)
+
+theme_lena <-
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    plot.title = element_text(size = 18, hjust = .5),
+    axis.title = element_text(size = 18),
+    axis.text = element_text(size = 16),
+    legend.title = element_text(size = 18), 
+    legend.text = element_text(size = 16),
+    legend.position = "bottom"
+  )
+
+
+#READ IN DATA
+
+#Study 1
+VLENALclean <- read.csv("~/Documents/GitHub/6m_convos/VLENALclean_20220126.csv")
+VanderbiltCombinedData <- read.csv("~/Documents/GitHub/6m_convos/VanderbiltCombinedData_20220126.csv")
+#Study 2
+SLENALclean <- read.csv("~/Documents/GitHub/6m_convos/SLENALclean_20220126.csv")
+StanfordCombinedData <- read.csv("~/Documents/GitHub/6m_convos/StanfordCombinedData_20220126.csv")
+
+
+#MERGE DATA
+CombinedData <- VanderbiltCombinedData %>%
+  mutate(Site = "Vanderbilt") %>%
+  bind_rows(StanfordCombinedData %>%
+              mutate(Site = "Stanford") %>%
+              rename(male = male.x))
+
+CombineLENA <- VLENALclean %>%
+  mutate(Site = "Vanderbilt") %>%
+  select(ID,
+         Site,
+         durationT,
+         turnTaking,
+         adultWordCnt,
+         Label) %>%
+  bind_rows(SLENALclean %>%
+              mutate(Site = "Stanford")%>%
+              select(ID,
+                     Site,
+                     durationT,
+                     turnTaking,
+                     adultWordCnt,
+                     Label)) %>%
+  mutate(Stanford = case_when(Site == "Vanderbilt" ~ 0,
+                              Site == "Stanford" ~ 1)) %>%
+  filter(Label == "adultinit" | Label == "childinit")
+```
+
+
+# DEMOGRAPHIC INFORMATION
+```{r}
+
+stat.desc(VanderbiltCombinedData$LENAage) 
+stat.desc(StanfordCombinedData$LENAage) 
+
+BabyRace <- CombinedData %>%
+  group_by(Site) %>%     
+  count(Site, baby_race) %>%
+  mutate(prop = prop.table(n))
+
+BabyLatinx <- CombinedData %>%
+  group_by(Site) %>%        
+  count(Site, baby_latinx) %>%
+  mutate(prop = prop.table(n))
+
+Male <- CombinedData %>%
+  group_by(Site) %>%        
+  count(Site, male) %>%
+  mutate(prop = prop.table(n))
+
+Education <- CombinedData %>%
+  group_by(Site) %>%     
+  count(Site, education_txt) %>%
+  mutate(prop = prop.table(n))
+
+MaritalStatus <- CombinedData %>%
+  group_by(Site) %>%        
+  count(Site, marital_status_txt) %>%
+  mutate(prop = prop.table(n))
+
+EmployStatus <- CombinedData %>%
+  group_by(Site) %>%       
+  count(Site, employment_status_txt) %>%
+  mutate(prop = prop.table(n))
+
+Income <- CombinedData %>%
+  group_by(Site) %>%        
+  count(Site, annual_income_txt) %>%
+  mutate(prop = prop.table(n))
+
+ChildInHome <- CombinedData %>%
+  group_by(Site) %>%        
+  count(Site, ppl_in_home_allchild) %>%
+  mutate(prop = prop.table(n))
+
+```
+
+
+# STUDY 1 ANALYSES
+
+#Descriptive stats
+```{r}
+V_N_desc <- VanderbiltCombinedData %>%
+  pivot_longer(cols = c(n_adultinit,n_childinit,prop_adultinit,prop_childinit,resprt_adult,resprt_child),
+               names_to = c(".value", "Label"),
+               names_sep = "_") %>%
+  group_by(Label) %>%
+  dplyr::summarize(n_mean = mean(n),
+                   n_sd = sd(n),
+                   n_min = min(n),
+                   n_max = max(n),
+                   prop_mean = mean(prop),
+                   prop_sd = sd(prop),
+                   prop_min = min(prop),
+                   prop_max = max(prop),
+                   resprt_mean = mean(resprt),
+                   resprt_sd = sd(resprt),
+                   resprt_min = min(resprt),
+                   resprt_max = max(resprt)
+  )
+V_N_desc
+
+V_Type_desc <- VLENALclean %>%
+  group_by(Label) %>%
+  dplyr::summarize(duration_mean = mean(duration),
+                   duration_sd = sd(duration),
+                   duration_min = min(duration),
+                   duration_max = max(duration),
+                   CT_mean = mean(turnTaking),
+                   CT_sd = sd(turnTaking),
+                   CT_min = min(turnTaking),
+                   CT_max = max(turnTaking),
+                   AWC_mean = mean(adultWordCnt),
+                   AWC_sd = sd(adultWordCnt),
+                   AWC_min = min(adultWordCnt),
+                   AWC_max = max(adultWordCnt)
+                   )
+V_Type_desc
+
+```
+
+
+### PRIMARY ANALYSES ###
+```{r}
+
+t.test(VanderbiltCombinedData$n_adultinit, VanderbiltCombinedData$n_childinit, paired = TRUE, alternative = "two.sided")
+cohens_d(VanderbiltCombinedData$n_adultinit, VanderbiltCombinedData$n_childinit, paired = TRUE)
+
+duration <- lmer(duration ~ AIconvo + (1 | ID), data = VLENALclean)
+check_model(duration)
+skewness(VLENALclean$duration)
+skewness(VLENALclean$durationT)
+durationT <- lmer(durationT ~ AIconvo + (1 | ID), data = VLENALclean)
+check_model(durationT)
+
+turnTakingP <- glmer(turnTaking ~ AIconvo + (1 | ID), data = VLENALclean, family = poisson(link = "log"))
+check_model(turnTakingP)
+
+adultWordCntP <- glmer(adultWordCnt ~ AIconvo + (1 | ID), data = VLENALclean, family = poisson(link = "log"))
+check_model(adultWordCntP)
+
+tab_model(durationT, turnTakingP, adultWordCntP)
+
+icc(durationT)
+icc(turnTakingP)
+icc(adultWordCntP)
+
+```
+
+
+# STUDY 2 ANALYSES
+
+#Descriptive stats
+```{r}
+
+S_N_desc <- StanfordCombinedData  %>%
+  pivot_longer(cols = c(n_adultinit,n_childinit,prop_adultinit,prop_childinit,resprt_adult,resprt_child),
+               names_to = c(".value", "Label"),
+               names_sep = "_") %>%
+  group_by(Label) %>%
+  dplyr::summarize(n_mean = mean(n),
+                   n_sd = sd(n),
+                   n_min = min(n),
+                   n_max = max(n),
+                   prop_mean = mean(prop),
+                   prop_sd = sd(prop),
+                   prop_min = min(prop),
+                   prop_max = max(prop),
+                   resprt_mean = mean(resprt),
+                   resprt_sd = sd(resprt),
+                   resprt_min = min(resprt),
+                   resprt_max = max(resprt)
+  )
+S_N_desc
+
+S_Type_desc <- SLENALclean %>%
+  group_by(Label) %>%
+  dplyr::summarize(duration_mean = mean(duration),
+                   duration_sd = sd(duration),
+                   duration_min = min(duration),
+                   duration_max = max(duration),
+                   CT_mean = mean(turnTaking),
+                   CT_sd = sd(turnTaking),
+                   CT_min = min(turnTaking),
+                   CT_max = max(turnTaking),
+                   AWC_mean = mean(adultWordCnt),
+                   AWC_sd = sd(adultWordCnt),
+                   AWC_min = min(adultWordCnt),
+                   AWC_max = max(adultWordCnt),
+                   durationT_mean = mean(durationT),
+                   durationT_sd = sd(durationT),
+                   durationT_min = min(durationT),
+                   durationT_max = max(durationT))
+S_Type_desc
+
+stat.desc(StanfordCombinedData$mbcdi_understand_tot)
+stat.desc(StanfordCombinedData$mbcdi_says_tot)
+stat.desc(StanfordCombinedData$mbcdi_says_percentile)
+
+```
+
+### PRIMARY ANALYSES ###
+```{r}
+
+t.test(StanfordCombinedData$n_adultinit, StanfordCombinedData$n_childinit, paired = TRUE, alternative = "two.sided")
+cohens_d(StanfordCombinedData$n_adultinit, StanfordCombinedData$n_childinit, paired = TRUE)
+
+Sduration <- lmer(duration ~ AIconvo + (1 | ID), data = SLENALclean)
+check_model(Sduration)
+skewness(SLENALclean$duration)
+skewness(SLENALclean$durationT)
+SdurationT <- lmer(durationT ~ AIconvo + (1 | ID), data = SLENALclean)
+check_model(SdurationT)
+SturnTakingP <- glmer(turnTaking ~ AIconvo + (1 | ID), data = SLENALclean, family = poisson(link = "log"))
+check_model(SturnTakingP)
+SadultWordCntP <- glmer(adultWordCnt ~ AIconvo + (1 | ID), data = SLENALclean, family = poisson(link = "log"))
+check_model(SadultWordCntP)
+
+tab_model(SdurationT, SturnTakingP, SadultWordCntP)
+
+icc(SdurationT)
+icc(SturnTakingP)
+icc(SadultWordCntP)
+
+```
+
+# Predicting later language
+```{r}
+
+fit1aQP <- glm(mbcdi_says_tot ~ n_adultinit, data=StanfordCombinedData, family = quasipoisson)
+check_model(fit1aQP)
+fit1bQP <- glm(mbcdi_says_tot ~ n_childinit, data=StanfordCombinedData, family = quasipoisson)
+check_model(fit1bQP)
+fit1cQP <- glm(mbcdi_says_tot ~ n_adultinit + n_childinit, data=StanfordCombinedData, family = quasipoisson)
+check_model(fit1cQP)
+tab_model(fit1aQP,fit1bQP,fit1cQP)
+
+fit2aQP <- glm(mbcdi_understand_tot ~ n_adultinit, data=StanfordCombinedData, family = quasipoisson)
+check_model(fit2aQP)
+fit2bQP <- glm(mbcdi_understand_tot ~ n_childinit, data=StanfordCombinedData, family = quasipoisson)
+check_model(fit2bQP)
+fit2cQP <- glm(mbcdi_understand_tot ~ n_adultinit + n_childinit, data=StanfordCombinedData, family = quasipoisson)
+check_model(fit2cQP)
+tab_model(fit2aQP,fit2bQP,fit2cQP)
+
+FiltSCD <- StanfordCombinedData %>%
+  filter(ID != 88)
+fit1bQPf <- glm(mbcdi_says_tot ~ n_childinit, data=FiltSCD, family = quasipoisson)
+check_model(fit1bQPf)
+fit1cQPf <- glm(mbcdi_says_tot ~ n_adultinit + n_childinit, data=FiltSCD, family = quasipoisson)
+check_model(fit1cQPf)
+tab_model(fit1bQPf, fit1cQPf)
+
+```
+
+# Figures
+
+# Figure 1: Box Plot
+```{r}
+d_lg <- VLENALclean %>%
+  mutate(site = "Study 1") %>%
+  bind_rows(SLENALclean %>%
+              mutate(site = "Study 2")) %>%
+  select(
+    site,
+    AIconvo,
+    duration,
+    adultWordCnt,
+    turnTaking,
+  ) %>%
+  pivot_longer(
+    cols = duration:turnTaking,
+    names_to = "metric"
+  ) %>%
+  mutate(
+    metric = factor(
+      metric,
+      levels = c("duration", "adultWordCnt", "turnTaking"),
+      labels = c("Duration", "Adult words", "Conversational turns")
+    )
+  )
+d_lg %>%
+  ggplot(aes(AIconvo, log(value), fill = site)) +
+  geom_boxplot(outlier.size = .5, outlier.alpha = .5) +
+  scale_y_continuous(breaks = seq.int(0, 8, 2)) +
+  theme_lena +
+  theme(
+    axis.title.y = element_text(vjust = 2.5),
+    axis.title.x = element_text(vjust = .05),
+    axis.text.x = element_text(vjust = .1),
+    legend.position = "none"
+  ) +
+  facet_grid(site~metric) +
+  scale_fill_manual(values = c("white", "gray")) +
+  labs(
+    x = "Conversation type",
+    y = "log(Value)",
+    fill = NULL
+  )
+
+
+```
+
+# Plot regression model results onto raw data points
+```{r}
+#Adult>Exp
+AE <- StanfordCombinedData
+AE$phatAE <- predict(fit1aQP, type="response")
+AE$LoCI <- AE$phatAE - predict(fit1aQP, interval = "confidence", level = 0.95)
+AE$HiCI <- AE$phatAE + predict(fit1aQP, interval = "confidence", level = 0.95)
+AE <- AE[with(AE, order(n_adultinit)), ]
+AdultExp <- ggplot(AE, aes(x = n_adultinit, y = phatAE)) +
+  geom_point(aes(y = mbcdi_says_tot), alpha=.5, position=position_jitter(h=.2), color="grey26", fill="grey26", size=1.5) +
+  geom_ribbon(aes(y = phatAE, ymin = LoCI, ymax = HiCI), alpha = .25) +
+  geom_line(size = 1) +
+  labs(x = "Adult Initiated Conversations", y = "Expected Expressive Vocabulary") +
+  scale_x_continuous(limits = c(0,250)) +
+  theme_lena +
+  theme(axis.title.y = element_text(vjust = 2.5),
+        axis.title.x = element_text(vjust = .05),
+        axis.text.x = element_text(vjust = .1),
+        legend.position = "none")
+
+#Child>Exp
+CE <- StanfordCombinedData
+CE$phatCE <- predict(fit1bQP, type="response")
+CE$LoCI <- CE$phatCE - predict(fit1bQP, interval = "confidence", level = 0.95)
+CE$HiCI <- CE$phatCE + predict(fit1bQP, interval = "confidence", level = 0.95)
+CE <- CE[with(CE, order(n_childinit)), ]
+ChildExp<-ggplot(CE, aes(x = n_childinit, y = phatCE)) +
+  geom_point(aes(y = mbcdi_says_tot), alpha=.5, position=position_jitter(h=.2), color="grey26", fill="grey26", size=1.5, shape=17) +
+  geom_ribbon(aes(y = phatCE, ymin = LoCI, ymax = HiCI), alpha = .25) +
+  geom_line(size = 1) +
+  labs(x = "Infant Initiated Conversations", y = "Expected Expressive Vocabulary") +
+  scale_x_continuous(limits = c(0,200)) +
+  theme_lena +
+  theme(axis.title.y = element_text(vjust = 2.5),
+        axis.title.x = element_text(vjust = .05),
+        axis.text.x = element_text(vjust = .1),
+        legend.position = "none")
+
+#Adult>Rec
+AR <- StanfordCombinedData
+AR$phatAR <- predict(fit2aQP, type="response")
+AR$LoCI <- AR$phatAR - predict(fit2aQP, interval = "confidence", level = 0.95)
+AR$HiCI <- AR$phatAR + predict(fit2aQP, interval = "confidence", level = 0.95)
+AR <- AR[with(AR, order(n_adultinit)), ]
+AdultRec <- ggplot(AR, aes(x = n_adultinit, y = phatAR)) +
+  geom_point(aes(y = mbcdi_understand_tot), alpha=.5, position=position_jitter(h=.2), color="grey36", fill="grey36", size=1.5) +
+  geom_ribbon(aes(y = phatAR, ymin = LoCI, ymax = HiCI), alpha = .25) +
+  geom_line(size = 1) +
+  labs(x = "Adult Initiated Conversations", y = "Expected Receptive Vocabulary") +
+  scale_x_continuous(limits = c(0,250)) +
+  theme_lena +
+  theme(axis.title.y = element_text(vjust = 2.5),
+        axis.title.x = element_text(vjust = .05),
+        axis.text.x = element_text(vjust = .1),
+        legend.position = "none")
+
+#Child>Rec
+CR <- StanfordCombinedData
+CR$phatCR <- predict(fit2bQP, type="response")
+CR$LoCI <- CR$phatCR - predict(fit2bQP, interval = "confidence", level = 0.95)
+CR$HiCI <- CR$phatCR + predict(fit2bQP, interval = "confidence", level = 0.95)
+CR <- CR[with(CR, order(n_childinit)), ]
+ChildRec<-ggplot(CR, aes(x = n_childinit, y = phatCR)) +
+  geom_point(aes(y = mbcdi_understand_tot), alpha=.5, position=position_jitter(h=.2), color="grey36", fill="grey36", size=1.5, shape=17) +
+  geom_ribbon(aes(y = phatCR, ymin = LoCI, ymax = HiCI), alpha = .25) +
+  geom_line(size = 1) +
+  labs(x = "Infant Initiated Conversations", y = "Expected Receptive Vocabulary") +
+  scale_x_continuous(limits = c(0,200)) +
+  theme_lena +
+  theme(axis.title.y = element_text(vjust = 2.5),
+        axis.title.x = element_text(vjust = .05),
+        axis.text.x = element_text(vjust = .1),
+        legend.position = "none")
+
+VocabPlots <- (AdultExp + ChildExp) / (AdultRec + ChildRec)
+VocabPlots
+
+```
+# Variability in convo Ns for discussion
+```{r}
+NCI <- CombinedData %>%
+  select(ID,
+         Site,
+         n_adultinit,
+         n_childinit,
+         n_convos,
+         convratio,
+         prop_adultinit,
+         prop_childinit) %>%
+  mutate(convratio = as.numeric(convratio)) %>%
+  mutate(moreCI = if_else(convratio < 1,1,0),
+         moreAI = if_else(convratio > 1,1,0))
+stat.desc(CombinedData$prop_childinit) 
+MoreCI <- NCI %>%
+  group_by(Site) %>%
+  count(Site,moreCI) %>%
+  mutate(prop = prop.table(n))
+
+```
+
+# SUPPLEMENT
+
+# Compare samples - Conversation features
+```{r}
+t.test(CombinedData$n_adultinit~CombinedData$Site, alternative = "two.sided")
+cohens_d(n_adultinit ~ Site, data = CombinedData, paired = FALSE)
+
+t.test(CombinedData$n_childinit~CombinedData$Site, alternative = "two.sided")
+cohens_d(n_childinit ~ Site, data = CombinedData, paired = FALSE)
+
+CompDur <- lmer(durationT ~ Stanford + (1|ID), data = CombineLENA)
+CompTurn <- glmer(turnTaking ~ Stanford + (1|ID), data = CombineLENA, family = poisson(link = "log"))
+CompAWC <- glmer(adultWordCnt ~ Stanford + (1|ID), data = CombineLENA, family = poisson(link = "log"))
+tab_model(CompDur, CompTurn, CompAWC)
+```
+
+
